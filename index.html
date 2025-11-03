@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Update version "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Update version with count down "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -173,24 +173,34 @@
 
         function startCountdown(orderId, etaMinutes, etaSetTimestamp) {
             const countdownEl = document.getElementById(`countdown-${orderId}`);
-            if (!countdownEl) return;
+            if (!countdownEl) {
+                if (countdownIntervals[orderId]) {
+                    clearInterval(countdownIntervals[orderId]);
+                    delete countdownIntervals[orderId];
+                }
+                return;
+            }
 
             const updateCountdown = () => {
+                const liveTask = Object.values(workerTasks).find(t => t.orderId === orderId);
+
+                if (liveTask && liveTask.status === 'Completed') {
+                    countdownEl.textContent = "Completed!";
+                    countdownEl.classList.remove('countdown-overdue');
+                    clearInterval(countdownIntervals[orderId]);
+                    delete countdownIntervals[orderId];
+                    return;
+                }
+
                 const totalSeconds = etaMinutes * 60;
                 const elapsedSeconds = (Date.now() - etaSetTimestamp) / 1000;
                 const remainingSeconds = totalSeconds - elapsedSeconds;
 
                 if (remainingSeconds <= 0) {
-                    // THE FIX: Before declaring "Overdue", check the live status.
-                    const liveTask = Object.values(workerTasks).find(t => t.orderId === orderId);
-                    if (liveTask && liveTask.status === 'Completed') {
-                        countdownEl.textContent = "Completed!";
-                        countdownEl.classList.remove('countdown-overdue');
-                    } else {
-                        countdownEl.textContent = "Overdue";
-                        countdownEl.classList.add('countdown-overdue');
-                    }
+                    countdownEl.textContent = "Overdue";
+                    countdownEl.classList.add('countdown-overdue');
                     clearInterval(countdownIntervals[orderId]);
+                    delete countdownIntervals[orderId];
                 } else {
                     const minutes = Math.floor(remainingSeconds / 60);
                     const seconds = Math.floor(remainingSeconds % 60);
@@ -199,9 +209,14 @@
                 }
             };
 
+            if (countdownIntervals[orderId]) {
+                clearInterval(countdownIntervals[orderId]);
+            }
+
             updateCountdown();
             countdownIntervals[orderId] = setInterval(updateCountdown, 1000);
         }
+
 
         function displayWorkers(workerData, taskData) {
             const list = document.getElementById('worker-status-list');
