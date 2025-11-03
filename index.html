@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Update version with count down "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Inbox plus voice msg "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -17,7 +17,11 @@
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
         .status-badge { font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-weight: 600; }
         .countdown-overdue { color: #ef4444; font-weight: bold; }
-        #notification-badge { top: -4px; right: -4px; }
+        #notification-badge, #inbox-badge { top: -4px; right: -4px; }
+        .notification-dropdown { display: none; }
+        .notification-dropdown.show { display: block; }
+        .notification-item.unread { background-color: #eef2ff; }
+        .hidden { display: none; }
     </style>
 
 
@@ -29,6 +33,15 @@
                     <button id="notification-bell" class="relative text-gray-600 hover:text-indigo-600">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
                         <span id="notification-badge" class="absolute bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden"></span>
+                    </button>
+                    <div id="notification-dropdown" class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl hidden z-20 border max-h-96 overflow-y-auto">
+                        <!-- Notifications will be rendered here -->
+                    </div>
+                </div>
+                 <div class="relative">
+                    <button id="inbox-icon" class="relative text-gray-600 hover:text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                        <span id="inbox-badge" class="absolute bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden"></span>
                     </button>
                 </div>
                 <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
@@ -70,6 +83,18 @@
     
     <div id="toast" class="hidden fixed bottom-5 right-5 bg-gray-900 text-white py-2 px-4 rounded-lg shadow-lg"></div>
 
+    <div id="inbox-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4 hidden">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg flex flex-col max-h-[80vh]">
+            <div class="p-4 border-b flex justify-between items-center">
+                <h3 class="text-lg font-bold">Message Inbox</h3>
+                <button id="inbox-close-btn" class="text-gray-500 hover:text-gray-800 text-2xl">×</button>
+            </div>
+            <div id="inbox-list" class="overflow-y-auto p-2">
+                <!-- Messages will be rendered here as a table -->
+            </div>
+        </div>
+    </div>
+
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyC0_DQIiyaVQllFH4pxH1Dm3r2kFXXoOgc",
@@ -83,6 +108,8 @@
         let workerTasks = {};
         let countdownIntervals = {};
         let notifications = [];
+        let unreadCount = 0;
+        let inboxUnreadCount = 0;
 
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -98,12 +125,77 @@
             speechSynthesis.speak(utterance);
         }
         
-        function addNotification(message) {
-            notifications.unshift(message);
-            const badge = document.getElementById('notification-badge');
-            badge.textContent = notifications.length;
-            badge.classList.remove('hidden');
+        function addNotification(message, options = {}) {
+            notifications.unshift({ id: Date.now(), message, read: false, timestamp: new Date(), ...options });
+            unreadCount++;
+            inboxUnreadCount++;
+            updateNotificationUI();
+            updateInboxBadge();
+            renderInbox();
             speak(message);
+        }
+
+        function updateNotificationUI() {
+            const badge = document.getElementById('notification-badge');
+            badge.textContent = unreadCount;
+            badge.classList.toggle('hidden', unreadCount === 0);
+            renderNotifications();
+        }
+        
+        function renderNotifications() {
+            const dropdown = document.getElementById('notification-dropdown');
+            if (notifications.length === 0) {
+                dropdown.innerHTML = `<p class="p-4 text-center text-sm text-gray-500">No notifications</p>`;
+            } else {
+                 dropdown.innerHTML = notifications.map(n => `
+                    <div class="p-3 border-b text-sm ${!n.read ? 'unread font-semibold' : 'text-gray-600'}">
+                        ${n.message}
+                    </div>
+                `).join('');
+            }
+        }
+
+        function updateInboxBadge() {
+            const badge = document.getElementById('inbox-badge');
+            badge.textContent = inboxUnreadCount;
+            badge.classList.toggle('hidden', inboxUnreadCount === 0);
+        }
+
+        function renderInbox() {
+            const inboxList = document.getElementById('inbox-list');
+            if (notifications.length === 0) {
+                inboxList.innerHTML = `<p class="p-8 text-center text-gray-500">Your inbox is empty.</p>`;
+                return;
+            }
+            inboxList.innerHTML = `
+                <table class="w-full text-sm">
+                    <tbody>
+                        ${notifications.map(n => `
+                            <tr class="border-b hover:bg-gray-50">
+                                <td class="p-3">
+                                    <p class="${!n.read ? 'font-semibold' : ''}">${n.message}</p>
+                                    <p class="text-xs text-gray-500">${n.timestamp.toLocaleString()}</p>
+                                </td>
+                                <td class="p-3 text-right">
+                                    <button onclick="deleteNotification(${n.id})" class="text-red-500 hover:text-red-700 text-xs font-semibold">Remove</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        function deleteNotification(id) {
+            const index = notifications.findIndex(n => n.id === id);
+            if (index > -1) {
+                notifications.splice(index, 1);
+                unreadCount = notifications.filter(n => !n.read).length;
+                inboxUnreadCount = unreadCount;
+                updateNotificationUI();
+                updateInboxBadge();
+                renderInbox();
+            }
         }
 
         function displayOrders(queueData) {
@@ -285,6 +377,19 @@
                     const queueData = data.tokenQueue || {};
                     const workerData = data.workers || {};
                     const taskData = data.workerTasks || {};
+
+                    // --- AUTOMATIC NOTIFICATION CLEANUP ---
+                    const activeOrderIds = new Set(Object.values(queueData).filter(o => o.status === 'serving' || o.status === 'waiting').map(o => o.id));
+                    const originalNotifCount = notifications.length;
+                    notifications = notifications.filter(n => !n.orderId || activeOrderIds.has(n.orderId));
+                    if (notifications.length < originalNotifCount) {
+                        unreadCount = notifications.filter(n => !n.read).length;
+                        inboxUnreadCount = unreadCount;
+                        updateNotificationUI();
+                        updateInboxBadge();
+                        renderInbox();
+                    }
+                    // --- END CLEANUP ---
                     
                     const previousTasks = { ...workerTasks };
                     workerTasks = taskData;
@@ -296,18 +401,18 @@
                     Object.keys(workerTasks).forEach(taskId => {
                         const currentTask = workerTasks[taskId];
                         const previousTask = previousTasks[taskId];
-                        const workerName = workers.find(w => w.id === currentTask.assignedTo)?.name || 'A worker';
+                        const workerName = (workers.find(w => w.id === currentTask.assignedTo) || {}).name || 'A worker';
 
                         // New completion
                         if (currentTask.status === 'Completed' && previousTask?.status !== 'Completed') {
                             const message = `${workerName} has completed ${currentTask.customerName}'s ${currentTask.details} order.`;
-                            addNotification(message);
+                            addNotification(message, { orderId: currentTask.orderId });
                         }
 
                         // New delay reason
                         if (currentTask.delayReason && currentTask.delayReason !== previousTask?.delayReason) {
-                            const message = `Delay reported by ${workerName} for ${currentTask.customerName}'s order: ${currentTask.delayReason}.`;
-                            addNotification(message);
+                            const message = `Delay from ${workerName} for ${currentTask.customerName}'s order: ${currentTask.delayReason}.`;
+                            addNotification(message, { orderId: currentTask.orderId });
                         }
                         
                         // Check if task just became overdue
@@ -318,11 +423,44 @@
                                 const prevElapsed = (Date.now() - (previousTask.etaSetTimestamp || 0)) / 1000;
                                 if ((previousTask.eta * 60) - prevElapsed >= 0) { // Was not overdue before
                                      const message = `Task for ${currentTask.customerName} assigned to ${workerName} is now overdue.`;
-                                     addNotification(message);
+                                     addNotification(message, { orderId: currentTask.orderId });
                                 }
                             }
                         }
                     });
+                });
+                
+                // Notification Bell Listener
+                const bell = document.getElementById('notification-bell');
+                const dropdown = document.getElementById('notification-dropdown');
+                bell.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    dropdown.classList.toggle('show');
+                    if (dropdown.classList.contains('show')) {
+                        unreadCount = 0;
+                        notifications.forEach(n => n.read = true);
+                        updateNotificationUI();
+                    }
+                });
+                document.addEventListener('click', (e) => {
+                    if (!bell.contains(e.target) && !dropdown.contains(e.target)) {
+                        dropdown.classList.remove('show');
+                    }
+                });
+                
+                 // Inbox Listeners
+                const inboxIcon = document.getElementById('inbox-icon');
+                const inboxModal = document.getElementById('inbox-modal');
+                const inboxCloseBtn = document.getElementById('inbox-close-btn');
+
+                inboxIcon.addEventListener('click', () => {
+                    inboxModal.classList.remove('hidden');
+                    inboxUnreadCount = 0;
+                    updateInboxBadge();
+                });
+
+                inboxCloseBtn.addEventListener('click', () => {
+                    inboxModal.classList.add('hidden');
                 });
                 
             } catch (e) {
@@ -332,6 +470,7 @@
         });
 
         window.assignTask = assignTask;
+        window.deleteNotification = deleteNotification;
     </script>
 
 
