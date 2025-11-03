@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Supervisor work flow "><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
+  "imports": {}
+}</script></head><body>
+
+
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-database-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .status-badge { font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-weight: 600; }
+    </style>
+
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Supervisor Dashboard</h1>
+            <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Main Orders Table -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4">Active Orders</h2>
+                <div class="max-h-[70vh] overflow-y-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-4 py-3">Token</th>
+                                <th class="px-4 py-3">Customer</th>
+                                <th class="px-4 py-3">Task</th>
+                                <th class="px-4 py-3">Assign Worker</th>
+                                <th class="px-4 py-3">Task Status</th>
+                                <th class="px-4 py-3">ETA</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-tbody">
+                            <!-- Order rows will be injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Worker Status -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4">Worker Status</h2>
+                <div id="worker-status-list" class="space-y-3">
+                    <!-- Worker status cards will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="toast" class="hidden fixed bottom-5 right-5 bg-gray-900 text-white py-2 px-4 rounded-lg shadow-lg"></div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyC0_DQIiyaVQllFH4pxH1Dm3r2kFXXoOgc",
+            authDomain: "navrosetailorapp.firebaseapp.com",
+            databaseURL: "https://navrosetailorapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "navrosetailorapp"
+        };
+        
+        let db;
+        let workers = [];
+        let workerTasks = {};
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 4000);
+        }
+
+        function speak(text) {
+            if (!('speechSynthesis' in window)) return;
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-IN'; // Using English voice for simplicity
+            speechSynthesis.speak(utterance);
+        }
+
+        function displayOrders(queueData) {
+            const tbody = document.getElementById('orders-tbody');
+            tbody.innerHTML = '';
+            
+            const activeOrders = Object.values(queueData).filter(o => o.status === 'serving' || o.status === 'waiting');
+            if (activeOrders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-gray-500">No active customers in the queue.</td></tr>';
+                return;
+            }
+            
+            activeOrders.sort((a,b) => a.tokenNumber - b.tokenNumber).forEach(order => {
+                const task = Object.values(workerTasks).find(t => t.orderId === order.id);
+
+                const workerOptions = workers.map(w => `<option value="${w.id}" ${task?.assignedTo === w.id ? 'selected' : ''}>${w.name}</option>`).join('');
+                
+                let taskStatus = 'Not Assigned';
+                let statusClass = 'bg-gray-200 text-gray-800';
+                let eta = '--';
+
+                if (task) {
+                    taskStatus = task.status;
+                    eta = task.eta ? `${task.eta} min` : '--';
+                    switch (task.status) {
+                        case 'Pending':
+                            statusClass = 'bg-yellow-200 text-yellow-800';
+                            break;
+                        case 'In Progress':
+                            statusClass = 'bg-blue-200 text-blue-800';
+                            break;
+                        case 'Completed':
+                            statusClass = 'bg-green-200 text-green-800';
+                            break;
+                    }
+                }
+
+                const row = `
+                    <tr class="border-b">
+                        <td class="px-4 py-3 font-bold text-lg">${order.tokenNumber}</td>
+                        <td class="px-4 py-3">${order.customerName}</td>
+                        <td class="px-4 py-3 text-gray-600">${order.appointmentFor}</td>
+                        <td class="px-4 py-3">
+                            <select onchange="assignTask('${order.id}', this.value, '${order.customerName}', '${order.appointmentFor}')" class="w-full p-1 border rounded-md text-sm" ${task ? 'disabled' : ''}>
+                                <option value="">Assign to...</option>
+                                ${workerOptions}
+                            </select>
+                        </td>
+                        <td class="px-4 py-3"><span class="status-badge ${statusClass}">${taskStatus}</span></td>
+                        <td class="px-4 py-3 font-semibold">${eta}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+
+        function displayWorkers(workerData, taskData) {
+            const list = document.getElementById('worker-status-list');
+            list.innerHTML = '';
+            workers = Object.values(workerData);
+
+            if (workers.length === 0) {
+                list.innerHTML = '<p class="text-center text-gray-500">No workers registered.</p>';
+                return;
+            }
+            
+            workers.forEach(worker => {
+                const assignedTask = Object.values(taskData).find(t => t.assignedTo === worker.id && t.status === 'In Progress');
+                const status = assignedTask ? 'Busy' : 'Available';
+                const statusClass = assignedTask ? 'text-red-600' : 'text-green-600';
+                
+                const card = `
+                    <div class="p-3 border rounded-lg">
+                        <div class="flex justify-between items-center">
+                            <span class="font-semibold">${worker.name}</span>
+                            <span class="text-sm font-bold ${statusClass}">${status}</span>
+                        </div>
+                        ${assignedTask ? `<p class="text-xs text-gray-500 mt-1">Working on: ${assignedTask.customerName}'s ${assignedTask.details}</p>` : ''}
+                    </div>
+                `;
+                list.innerHTML += card;
+            });
+        }
+
+        async function assignTask(orderId, workerId, customerName, details) {
+            if (!workerId) return;
+
+            const task = {
+                orderId: orderId,
+                assignedTo: workerId,
+                customerName: customerName,
+                details: details,
+                status: 'Pending', // Pending, In Progress, Completed
+                eta: null,
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            };
+
+            try {
+                const newTaskRef = db.ref('workerTasks').push();
+                await newTaskRef.set(task);
+                showToast(`Task assigned to ${workers.find(w=>w.id === workerId).name}`);
+            } catch (error) {
+                console.error("Error assigning task:", error);
+                showToast("Failed to assign task.");
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                db = firebase.database();
+
+                // Listen to all necessary data nodes
+                db.ref().on('value', (snapshot) => {
+                    const data = snapshot.val() || {};
+                    const queueData = data.tokenQueue || {};
+                    const workerData = data.workers || {};
+                    const taskData = data.workerTasks || {};
+                    
+                    const previousTasks = { ...workerTasks };
+                    workerTasks = taskData; // Update global state
+                    
+                    displayWorkers(workerData, taskData);
+                    displayOrders(queueData);
+                    
+                    // Check for newly completed tasks for voice notification
+                    Object.keys(workerTasks).forEach(taskId => {
+                        const currentTask = workerTasks[taskId];
+                        const previousTask = previousTasks[taskId];
+                        if (currentTask.status === 'Completed' && previousTask?.status !== 'Completed') {
+                            const workerName = workers.find(w => w.id === currentTask.assignedTo)?.name || 'A worker';
+                            const message = `${workerName} has completed ${currentTask.customerName}'s ${currentTask.details} order.`;
+                            showToast(message);
+                            speak(message);
+                        }
+                    });
+                });
+                
+            } catch (e) {
+                console.error("Firebase initialization failed:", e);
+                alert("Could not connect to the database. The app will not work.");
+            }
+        });
+
+        // Make functions globally accessible
+        window.assignTask = assignTask;
+    </script>
+
+
+<script src="./script.js"></script></body></html>
