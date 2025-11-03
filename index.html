@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Supervisor work flow "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav supervisor </title><meta name="title" content="Nav supervisor "><meta name="description" content="Count down "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -16,13 +16,23 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
         .status-badge { font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-weight: 600; }
+        .countdown-overdue { color: #ef4444; font-weight: bold; }
+        #notification-badge { top: -4px; right: -4px; }
     </style>
 
 
     <div class="max-w-7xl mx-auto">
         <header class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Supervisor Dashboard</h1>
-            <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+            <div class="flex items-center gap-4">
+                <div class="relative">
+                    <button id="notification-bell" class="relative text-gray-600 hover:text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                        <span id="notification-badge" class="absolute bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden"></span>
+                    </button>
+                </div>
+                <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+            </div>
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -71,6 +81,8 @@
         let db;
         let workers = [];
         let workerTasks = {};
+        let countdownIntervals = {};
+        let notifications = [];
 
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -82,13 +94,25 @@
         function speak(text) {
             if (!('speechSynthesis' in window)) return;
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'en-IN'; // Using English voice for simplicity
+            utterance.lang = 'en-IN';
             speechSynthesis.speak(utterance);
+        }
+        
+        function addNotification(message) {
+            notifications.unshift(message);
+            const badge = document.getElementById('notification-badge');
+            badge.textContent = notifications.length;
+            badge.classList.remove('hidden');
+            speak(message);
         }
 
         function displayOrders(queueData) {
             const tbody = document.getElementById('orders-tbody');
             tbody.innerHTML = '';
+
+            // Clear all existing intervals
+            Object.values(countdownIntervals).forEach(clearInterval);
+            countdownIntervals = {};
             
             const activeOrders = Object.values(queueData).filter(o => o.status === 'serving' || o.status === 'waiting');
             if (activeOrders.length === 0) {
@@ -98,26 +122,23 @@
             
             activeOrders.sort((a,b) => a.tokenNumber - b.tokenNumber).forEach(order => {
                 const task = Object.values(workerTasks).find(t => t.orderId === order.id);
-
                 const workerOptions = workers.map(w => `<option value="${w.id}" ${task?.assignedTo === w.id ? 'selected' : ''}>${w.name}</option>`).join('');
                 
                 let taskStatus = 'Not Assigned';
                 let statusClass = 'bg-gray-200 text-gray-800';
-                let eta = '--';
+                let etaHtml = '--';
 
                 if (task) {
                     taskStatus = task.status;
-                    eta = task.eta ? `${task.eta} min` : '--';
+                    if (task.eta && task.etaSetTimestamp) {
+                        etaHtml = `<div id="countdown-${task.orderId}" class="font-semibold text-lg">--:--</div>`;
+                        startCountdown(task.orderId, task.eta, task.etaSetTimestamp);
+                    }
+
                     switch (task.status) {
-                        case 'Pending':
-                            statusClass = 'bg-yellow-200 text-yellow-800';
-                            break;
-                        case 'In Progress':
-                            statusClass = 'bg-blue-200 text-blue-800';
-                            break;
-                        case 'Completed':
-                            statusClass = 'bg-green-200 text-green-800';
-                            break;
+                        case 'Pending': statusClass = 'bg-yellow-200 text-yellow-800'; break;
+                        case 'In Progress': statusClass = 'bg-blue-200 text-blue-800'; break;
+                        case 'Completed': statusClass = 'bg-green-200 text-green-800'; break;
                     }
                 }
 
@@ -133,11 +154,35 @@
                             </select>
                         </td>
                         <td class="px-4 py-3"><span class="status-badge ${statusClass}">${taskStatus}</span></td>
-                        <td class="px-4 py-3 font-semibold">${eta}</td>
+                        <td class="px-4 py-3">${etaHtml}</td>
                     </tr>
                 `;
                 tbody.innerHTML += row;
             });
+        }
+
+        function startCountdown(orderId, etaMinutes, etaSetTimestamp) {
+            const countdownEl = document.getElementById(`countdown-${orderId}`);
+            if (!countdownEl) return;
+
+            const updateCountdown = () => {
+                const totalSeconds = etaMinutes * 60;
+                const elapsedSeconds = (Date.now() - etaSetTimestamp) / 1000;
+                const remainingSeconds = totalSeconds - elapsedSeconds;
+
+                if (remainingSeconds <= 0) {
+                    countdownEl.textContent = "Overdue";
+                    countdownEl.classList.add('countdown-overdue');
+                } else {
+                    const minutes = Math.floor(remainingSeconds / 60);
+                    const seconds = Math.floor(remainingSeconds % 60);
+                    countdownEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                    countdownEl.classList.remove('countdown-overdue');
+                }
+            };
+
+            updateCountdown();
+            countdownIntervals[orderId] = setInterval(updateCountdown, 1000);
         }
 
         function displayWorkers(workerData, taskData) {
@@ -170,6 +215,7 @@
 
         async function assignTask(orderId, workerId, customerName, details) {
             if (!workerId) return;
+            const workerName = workers.find(w=>w.id === workerId)?.name || 'a worker';
 
             const task = {
                 orderId: orderId,
@@ -178,13 +224,16 @@
                 details: details,
                 status: 'Pending', // Pending, In Progress, Completed
                 eta: null,
+                etaSetTimestamp: null,
+                delayReason: null,
                 timestamp: firebase.database.ServerValue.TIMESTAMP
             };
 
             try {
                 const newTaskRef = db.ref('workerTasks').push();
                 await newTaskRef.set(task);
-                showToast(`Task assigned to ${workers.find(w=>w.id === workerId).name}`);
+                showToast(`Task assigned to ${workerName}`);
+                speak(`New task for ${workerName}: ${details} for ${customerName}.`);
             } catch (error) {
                 console.error("Error assigning task:", error);
                 showToast("Failed to assign task.");
@@ -198,7 +247,6 @@
                 }
                 db = firebase.database();
 
-                // Listen to all necessary data nodes
                 db.ref().on('value', (snapshot) => {
                     const data = snapshot.val() || {};
                     const queueData = data.tokenQueue || {};
@@ -206,20 +254,40 @@
                     const taskData = data.workerTasks || {};
                     
                     const previousTasks = { ...workerTasks };
-                    workerTasks = taskData; // Update global state
+                    workerTasks = taskData;
                     
                     displayWorkers(workerData, taskData);
                     displayOrders(queueData);
                     
-                    // Check for newly completed tasks for voice notification
+                    // Check for notifications
                     Object.keys(workerTasks).forEach(taskId => {
                         const currentTask = workerTasks[taskId];
                         const previousTask = previousTasks[taskId];
+                        const workerName = workers.find(w => w.id === currentTask.assignedTo)?.name || 'A worker';
+
+                        // New completion
                         if (currentTask.status === 'Completed' && previousTask?.status !== 'Completed') {
-                            const workerName = workers.find(w => w.id === currentTask.assignedTo)?.name || 'A worker';
                             const message = `${workerName} has completed ${currentTask.customerName}'s ${currentTask.details} order.`;
-                            showToast(message);
-                            speak(message);
+                            addNotification(message);
+                        }
+
+                        // New delay reason
+                        if (currentTask.delayReason && currentTask.delayReason !== previousTask?.delayReason) {
+                            const message = `Delay reported by ${workerName} for ${currentTask.customerName}'s order: ${currentTask.delayReason}.`;
+                            addNotification(message);
+                        }
+                        
+                        // Check if task just became overdue
+                        if (currentTask.eta && currentTask.etaSetTimestamp) {
+                            const totalSeconds = currentTask.eta * 60;
+                            const elapsedSeconds = (Date.now() - currentTask.etaSetTimestamp) / 1000;
+                            if (totalSeconds - elapsedSeconds < 0 && previousTask) {
+                                const prevElapsed = (Date.now() - (previousTask.etaSetTimestamp || 0)) / 1000;
+                                if ((previousTask.eta * 60) - prevElapsed >= 0) { // Was not overdue before
+                                     const message = `Task for ${currentTask.customerName} assigned to ${workerName} is now overdue.`;
+                                     addNotification(message);
+                                }
+                            }
                         }
                     });
                 });
@@ -230,7 +298,6 @@
             }
         });
 
-        // Make functions globally accessible
         window.assignTask = assignTask;
     </script>
 
